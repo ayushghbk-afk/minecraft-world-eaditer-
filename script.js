@@ -1,61 +1,70 @@
 // ==================== GLOBAL STATE ====================
-let currentWorld = null;
-let worldData = {};
-let worldFiles = {};
+let worldData = new Map(); // Store blocks: key "x,y,z" -> block type
 let history = [];
 let historyIndex = -1;
 let currentTool = 'place';
 let currentBlock = 'stone';
 let brushSize = 1;
 let brushShape = 'cube';
-let selectedArea = null;
-let clipboard = null;
 let viewMode = '3d';
-let camera = { x: 0, y: 64, z: 0, rotX: 45, rotY: 30 };
+let selectedBlockPos = null;
+
+// Camera for 3D view
+let camera = {
+    rotX: 45,
+    rotY: 30,
+    zoom: 1.0,
+    targetX: 0,
+    targetY: 64,
+    targetZ: 0
+};
+
 let mouseDown = false;
 let lastMouseX = 0, lastMouseY = 0;
+let canvas, ctx, width, height;
 
-// Block Types with colors and emojis
+// Block definitions with colors and emojis
 const BLOCKS = {
     air: { id: 0, name: 'Air', emoji: '⬜', color: '#808080', transparent: true },
     stone: { id: 1, name: 'Stone', emoji: '🪨', color: '#808080' },
     dirt: { id: 2, name: 'Dirt', emoji: '🟫', color: '#8B5A2B' },
-    grass: { id: 3, name: 'Grass', emoji: '🟢', color: '#5C9E5C' },
+    grass: { id: 3, name: 'Grass', emoji: '🌿', color: '#5C9E5C' },
     wood: { id: 4, name: 'Wood', emoji: '🪵', color: '#8B5A2B' },
     cobblestone: { id: 5, name: 'Cobblestone', emoji: '🪨', color: '#696969' },
-    sand: { id: 6, name: 'Sand', emoji: '🟨', color: '#F4E542' },
+    sand: { id: 6, name: 'Sand', emoji: '🏜️', color: '#F4E542' },
     water: { id: 7, name: 'Water', emoji: '💧', color: '#3B6E9E' },
     lava: { id: 8, name: 'Lava', emoji: '🌋', color: '#FF4500' },
     gold: { id: 9, name: 'Gold', emoji: '🪙', color: '#FFD700' },
     diamond: { id: 10, name: 'Diamond', emoji: '💎', color: '#4AE8E8' },
     iron: { id: 11, name: 'Iron', emoji: '⚙️', color: '#C0C0C0' },
-    emerald: { id: 12, name: 'Emerald', emoji: '🟢', color: '#50C878' },
+    emerald: { id: 12, name: 'Emerald', emoji: '💚', color: '#50C878' },
     redstone: { id: 13, name: 'Redstone', emoji: '🔴', color: '#FF4444' },
     lapis: { id: 14, name: 'Lapis', emoji: '🔵', color: '#2663C9' },
     obsidian: { id: 15, name: 'Obsidian', emoji: '⚫', color: '#2D2D2D' },
     brick: { id: 16, name: 'Brick', emoji: '🧱', color: '#B5623B' },
     glass: { id: 17, name: 'Glass', emoji: '🔲', color: '#A9F5F5' },
     leaves: { id: 18, name: 'Leaves', emoji: '🍃', color: '#3A9E3A' },
-    tnt: { id: 19, name: 'TNT', emoji: '💣', color: '#FF4444' }
+    tnt: { id: 19, name: 'TNT', emoji: '💣', color: '#FF4444' },
+    bedrock: { id: 20, name: 'Bedrock', emoji: '🪨', color: '#4A4A4A' }
 };
 
-const BLOCK_LIST = Object.entries(BLOCKS).filter(([key]) => key !== 'air');
+const BLOCK_LIST = Object.keys(BLOCKS).filter(k => k !== 'air');
 
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     initBlockPalette();
-    initCanvas();
     initWorld();
 });
 
 function initEventListeners() {
     // File inputs
-    document.getElementById('fileInput')?.addEventListener('change', handleWorldFolderSelect);
-    document.getElementById('mcworldInput')?.addEventListener('change', handleMcworldSelect);
+    document.getElementById('folderInput')?.addEventListener('change', handleFolderImport);
+    document.getElementById('mcworldInput')?.addEventListener('change', handleMcworldImport);
+    document.getElementById('uploadArea')?.addEventListener('click', () => document.getElementById('folderInput').click());
     
-    // Viewport tabs
-    document.querySelectorAll('.viewport-btn').forEach(btn => {
+    // View mode buttons
+    document.querySelectorAll('.view-btn').forEach(btn => {
         btn.addEventListener('click', () => switchViewMode(btn.dataset.view));
     });
     
@@ -68,7 +77,7 @@ function initEventListeners() {
     const brushSizeInput = document.getElementById('brushSize');
     brushSizeInput?.addEventListener('input', (e) => {
         brushSize = parseInt(e.target.value);
-        document.getElementById('brushSizeValue').innerText = brushSize;
+        document.getElementById('brushSizeVal').innerText = brushSize;
     });
     
     document.getElementById('brushShape')?.addEventListener('change', (e) => {
@@ -76,18 +85,37 @@ function initEventListeners() {
     });
     
     // Action buttons
-    document.getElementById('selectAreaBtn')?.addEventListener('click', () => startAreaSelection());
-    document.getElementById('fillAreaBtn')?.addEventListener('click', () => fillSelectedArea());
-    document.getElementById('copyAreaBtn')?.addEventListener('click', () => copySelectedArea());
-    document.getElementById('pasteAreaBtn')?.addEventListener('click', () => pasteArea());
-    document.getElementById('clearAreaBtn')?.addEventListener('click', () => clearSelectedArea());
-    document.getElementById('smoothTerrainBtn')?.addEventListener('click', () => smoothTerrain());
-    document.getElementById('generateTreesBtn')?.addEventListener('click', () => generateTrees());
-    document.getElementById('generateOresBtn')?.addEventListener('click', () => generateOres());
+    document.getElementById('genTreesBtn')?.addEventListener('click', () => generateTrees());
+    document.getElementById('genOresBtn')?.addEventListener('click', () => generateOres());
+    document.getElementById('smoothBtn')?.addEventListener('click', () => smoothTerrain());
+    document.getElementById('clearAreaBtn')?.addEventListener('click', () => clearArea());
     document.getElementById('saveWorldBtn')?.addEventListener('click', () => saveWorld());
     document.getElementById('exportWorldBtn')?.addEventListener('click', () => exportWorld());
     document.getElementById('undoBtn')?.addEventListener('click', () => undo());
     document.getElementById('redoBtn')?.addEventListener('click', () => redo());
+    
+    // Canvas events
+    canvas = document.getElementById('worldCanvas');
+    if (canvas) {
+        ctx = canvas.getContext('2d');
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', () => mouseDown = false);
+        canvas.addEventListener('wheel', onMouseWheel);
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    }
+}
+
+function resizeCanvas() {
+    const container = document.querySelector('.canvas-container');
+    if (container && canvas) {
+        width = container.clientWidth;
+        height = container.clientHeight;
+        canvas.width = width;
+        canvas.height = height;
+        render();
+    }
 }
 
 function initBlockPalette() {
@@ -95,31 +123,30 @@ function initBlockPalette() {
     if (!palette) return;
     
     palette.innerHTML = '';
-    Object.entries(BLOCKS).forEach(([key, block]) => {
-        if (key !== 'air') {
-            const blockDiv = document.createElement('div');
-            blockDiv.className = 'block-item';
-            blockDiv.style.background = block.color;
-            blockDiv.style.opacity = block.transparent ? '0.7' : '1';
-            blockDiv.innerHTML = `<span style="font-size: 24px;">${block.emoji}</span>`;
-            blockDiv.title = block.name;
-            blockDiv.onclick = () => setCurrentBlock(key);
-            if (currentBlock === key) blockDiv.classList.add('selected');
-            palette.appendChild(blockDiv);
-        }
+    BLOCK_LIST.forEach(blockKey => {
+        const block = BLOCKS[blockKey];
+        const div = document.createElement('div');
+        div.className = 'block-item';
+        div.style.background = block.color;
+        div.style.opacity = block.transparent ? '0.7' : '1';
+        div.innerHTML = block.emoji;
+        div.title = block.name;
+        div.onclick = () => setCurrentBlock(blockKey);
+        if (currentBlock === blockKey) div.classList.add('selected');
+        palette.appendChild(div);
     });
 }
 
-function setCurrentBlock(blockId) {
-    currentBlock = blockId;
+function setCurrentBlock(blockKey) {
+    currentBlock = blockKey;
     document.querySelectorAll('.block-item').forEach((item, i) => {
-        if (i === Object.keys(BLOCKS).filter(k => k !== 'air').indexOf(blockId)) {
+        if (BLOCK_LIST[i] === blockKey) {
             item.classList.add('selected');
         } else {
             item.classList.remove('selected');
         }
     });
-    showToast(`Selected: ${BLOCKS[blockId].name}`);
+    showToast(`Selected: ${BLOCKS[blockKey].name}`);
 }
 
 function setCurrentTool(tool) {
@@ -131,256 +158,357 @@ function setCurrentTool(tool) {
             btn.classList.remove('active');
         }
     });
-    showToast(`Tool: ${tool === 'place' ? 'Place Block' : tool === 'remove' ? 'Remove Block' : tool === 'replace' ? 'Replace' : 'Paint Mode'}`);
 }
 
 function switchViewMode(mode) {
     viewMode = mode;
-    document.querySelectorAll('.viewport-btn').forEach(btn => {
+    document.querySelectorAll('.view-btn').forEach(btn => {
         if (btn.dataset.view === mode) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
         }
     });
-    
-    const canvas = document.getElementById('worldCanvas');
-    const miniMapDiv = document.getElementById('2dView');
-    
-    if (mode === '2d' || mode === 'top' || mode === 'side') {
-        canvas.style.display = 'none';
-        miniMapDiv.style.display = 'block';
-        render2DView();
-    } else {
-        canvas.style.display = 'block';
-        miniMapDiv.style.display = 'none';
-        render3DView();
-    }
+    render();
 }
 
-// ==================== WORLD MANAGEMENT ====================
+// ==================== WORLD GENERATION ====================
 function initWorld() {
-    // Create a default 50x50x50 world
-    worldData = {};
-    for (let x = -25; x < 25; x++) {
-        for (let z = -25; z < 25; z++) {
-            // Ground level
-            setBlock(x, 60, z, 'grass');
-            // Dirt layer
-            setBlock(x, 59, z, 'dirt');
-            setBlock(x, 58, z, 'dirt');
-            // Stone base
-            for (let y = 55; y < 58; y++) {
-                setBlock(x, y, z, 'stone');
-            }
-            // Add some hills
-            const height = Math.sin(x * 0.3) * Math.cos(z * 0.3) * 3;
-            if (height > 0) {
-                for (let h = 1; h <= height; h++) {
-                    setBlock(x, 60 + h, z, 'grass');
+    // Generate a beautiful terrain
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            // Perlin-like height using sine/cosine
+            const height = Math.floor(
+                60 + 
+                Math.sin(x * 0.2) * Math.cos(z * 0.2) * 4 +
+                Math.sin(x * 0.5) * 2 +
+                Math.cos(z * 0.5) * 2
+            );
+            
+            // Ground layers
+            for (let y = 55; y <= height; y++) {
+                if (y === height) {
+                    setBlock(x, y, z, 'grass');
+                } else if (y >= height - 3) {
+                    setBlock(x, y, z, 'dirt');
+                } else {
+                    setBlock(x, y, z, 'stone');
                 }
             }
         }
     }
     
     // Add some trees
-    for (let i = 0; i < 10; i++) {
-        const x = Math.floor(Math.random() * 40) - 20;
-        const z = Math.floor(Math.random() * 40) - 20;
-        generateTree(x, 61, z);
+    for (let i = 0; i < 15; i++) {
+        const x = Math.floor(Math.random() * 50) - 25;
+        const z = Math.floor(Math.random() * 50) - 25;
+        let y = 61;
+        while (getBlock(x, y, z) === 'air' && y > 55) y--;
+        generateTree(x, y + 1, z);
     }
     
-    updateWorldStats();
+    // Add water
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            let height = 60;
+            for (let y = 65; y >= 55; y--) {
+                if (getBlock(x, y, z) !== 'air') {
+                    height = y;
+                    break;
+                }
+            }
+            if (height < 62) {
+                for (let y = height + 1; y <= 62; y++) {
+                    setBlock(x, y, z, 'water');
+                }
+            }
+        }
+    }
+    
     saveToHistory();
+    updateStats();
+    render();
 }
 
 function setBlock(x, y, z, blockType) {
     const key = `${x},${y},${z}`;
-    if (blockType === 'air' || blockType === null) {
-        delete worldData[key];
+    if (blockType === 'air') {
+        worldData.delete(key);
     } else {
-        worldData[key] = blockType;
+        worldData.set(key, blockType);
     }
 }
 
 function getBlock(x, y, z) {
-    const key = `${x},${y},${z}`;
-    return worldData[key] || 'air';
+    return worldData.get(`${x},${y},${z}`) || 'air';
 }
 
-function handleWorldFolderSelect(event) {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
+// ==================== 3D RENDERING ENGINE ====================
+function render() {
+    if (!ctx) return;
     
-    showLoading(true);
-    setTimeout(() => {
-        showLoading(false);
-        document.getElementById('importSection').style.display = 'none';
-        document.getElementById('mainEditor').style.display = 'grid';
-        showToast('World loaded successfully!');
-        render3DView();
-    }, 1000);
+    ctx.clearRect(0, 0, width, height);
+    
+    if (viewMode === '2d' || viewMode === 'top') {
+        render2DMap();
+    } else {
+        render3D();
+    }
+    
+    requestAnimationFrame(render);
 }
 
-function handleMcworldSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    
-    showLoading(true);
-    setTimeout(() => {
-        showLoading(false);
-        document.getElementById('importSection').style.display = 'none';
-        document.getElementById('mainEditor').style.display = 'grid';
-        showToast('.mcworld file loaded successfully!');
-        render3DView();
-    }, 1000);
-}
-
-// ==================== 3D RENDERING ====================
-let ctx, canvas, width, height;
-
-function initCanvas() {
-    canvas = document.getElementById('worldCanvas');
-    if (!canvas) return;
-    
-    ctx = canvas.getContext('2d');
-    width = canvas.width;
-    height = canvas.height;
-    
-    canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('mousemove', onMouseMove);
-    canvas.addEventListener('mouseup', () => mouseDown = false);
-    canvas.addEventListener('wheel', onMouseWheel);
-    
-    render3DView();
-}
-
-function render3DView() {
-    if (!ctx || viewMode !== '3d') return;
-    
-    ctx.fillStyle = '#87CEEB';
+function render3D() {
+    // Draw sky gradient
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#1a2a3a');
+    grad.addColorStop(1, '#0a1a2a');
+    ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
     
-    // Draw blocks
-    const blocksToDraw = [];
-    for (const [key, blockType] of Object.entries(worldData)) {
+    // Collect and sort blocks for proper depth
+    const blocks = [];
+    for (const [key, blockType] of worldData) {
         const [x, y, z] = key.split(',').map(Number);
-        const screenX = projectX(x, z, y);
-        const screenY = projectY(x, z, y);
-        
-        if (screenX >= -50 && screenX < width + 50 && screenY >= -50 && screenY < height + 50) {
-            blocksToDraw.push({ x, y, z, screenX, screenY, blockType });
+        const screenPos = project3D(x, y, z);
+        if (screenPos) {
+            blocks.push({ x, y, z, blockType, screenX: screenPos.x, screenY: screenPos.y, depth: screenPos.depth });
         }
     }
     
-    // Sort by Y for pseudo-3D effect
-    blocksToDraw.sort((a, b) => (a.y + a.z) - (b.y + b.z));
+    // Sort by depth (far to near)
+    blocks.sort((a, b) => b.depth - a.depth);
     
-    blocksToDraw.forEach(block => {
+    // Draw blocks
+    const blockSize = 16 * camera.zoom;
+    blocks.forEach(block => {
         const blockInfo = BLOCKS[block.blockType];
-        const size = 12;
         
+        // Draw block
         ctx.fillStyle = blockInfo.color;
-        ctx.fillRect(block.screenX - size/2, block.screenY - size/2, size, size);
+        ctx.fillRect(block.screenX - blockSize/2, block.screenY - blockSize/2, blockSize, blockSize);
         
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '10px Arial';
-        ctx.fillText(blockInfo.emoji, block.screenX - 6, block.screenY + 4);
+        // Draw outline
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(block.screenX - blockSize/2, block.screenY - blockSize/2, blockSize, blockSize);
         
-        // Highlight hovered block
-        if (isHoveringBlock(block)) {
+        // Draw emoji
+        ctx.font = `${blockSize * 0.6}px "Segoe UI Emoji"`;
+        ctx.fillStyle = '#FFF';
+        ctx.shadowBlur = 0;
+        ctx.fillText(blockInfo.emoji, block.screenX - blockSize/3, block.screenY + blockSize/4);
+        
+        // Highlight selected block
+        if (selectedBlockPos && selectedBlockPos.x === block.x && selectedBlockPos.y === block.y && selectedBlockPos.z === block.z) {
             ctx.strokeStyle = '#FFD700';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(block.screenX - size/2, block.screenY - size/2, size, size);
+            ctx.lineWidth = 3;
+            ctx.strokeRect(block.screenX - blockSize/2, block.screenY - blockSize/2, blockSize, blockSize);
         }
     });
+}
+
+function project3D(x, y, z) {
+    const radX = camera.rotX * Math.PI / 180;
+    const radY = camera.rotY * Math.PI / 180;
     
-    requestAnimationFrame(() => render3DView());
+    // Translate relative to camera target
+    const tx = x - camera.targetX;
+    const ty = y - camera.targetY;
+    const tz = z - camera.targetZ;
+    
+    // Rotate around Y
+    const x1 = tx * Math.cos(radY) + tz * Math.sin(radY);
+    const z1 = -tx * Math.sin(radY) + tz * Math.cos(radY);
+    
+    // Rotate around X
+    const y1 = ty * Math.cos(radX) - z1 * Math.sin(radX);
+    const z2 = ty * Math.sin(radX) + z1 * Math.cos(radX);
+    
+    const scale = 200 / (z2 + 200) * camera.zoom;
+    const screenX = width / 2 + x1 * scale;
+    const screenY = height / 2 - y1 * scale;
+    
+    if (screenX < -100 || screenX > width + 100 || screenY < -100 || screenY > height + 100) {
+        return null;
+    }
+    
+    return { x: screenX, y: screenY, depth: z2 };
 }
 
-function projectX(x, z, y) {
-    const angle = camera.rotY * Math.PI / 180;
-    const xRot = x * Math.cos(angle) - z * Math.sin(angle);
-    const scale = 300 / (y + 100);
-    return width / 2 + xRot * 10;
+function render2DMap() {
+    const cellSize = Math.min(width / 70, height / 70);
+    const offsetX = (width - 60 * cellSize) / 2;
+    const offsetY = (height - 60 * cellSize) / 2;
+    
+    ctx.fillStyle = '#1a1a2a';
+    ctx.fillRect(0, 0, width, height);
+    
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            // Find highest block
+            let topBlock = 'air';
+            for (let y = 70; y >= 55; y--) {
+                const block = getBlock(x, y, z);
+                if (block !== 'air') {
+                    topBlock = block;
+                    break;
+                }
+            }
+            
+            const blockInfo = BLOCKS[topBlock];
+            const screenX = offsetX + (x + 30) * cellSize;
+            const screenY = offsetY + (z + 30) * cellSize;
+            
+            ctx.fillStyle = blockInfo.color;
+            ctx.fillRect(screenX, screenY, cellSize - 1, cellSize - 1);
+            
+            if (cellSize > 15) {
+                ctx.font = `${Math.min(cellSize * 0.6, 16)}px "Segoe UI Emoji"`;
+                ctx.fillStyle = '#FFF';
+                ctx.fillText(blockInfo.emoji, screenX + cellSize * 0.2, screenY + cellSize * 0.7);
+            }
+        }
+    }
+    
+    // Draw crosshair at camera target
+    const targetX = offsetX + (camera.targetX + 30) * cellSize;
+    const targetY = offsetY + (camera.targetZ + 30) * cellSize;
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(targetX - 10, targetY);
+    ctx.lineTo(targetX + 10, targetY);
+    ctx.moveTo(targetX, targetY - 10);
+    ctx.lineTo(targetX, targetY + 10);
+    ctx.stroke();
 }
 
-function projectY(x, z, y) {
-    const angle = camera.rotX * Math.PI / 180;
-    const zRot = x * Math.sin(angle) + z * Math.cos(angle);
-    return height / 2 - y * 8 + zRot * 4;
-}
-
+// ==================== MOUSE INTERACTION ====================
 function onMouseDown(e) {
     mouseDown = true;
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
-    handleBlockPlacement(e);
+    
+    if (viewMode === '3d') {
+        const block = getBlockUnderMouse(e);
+        if (block) {
+            if (currentTool === 'place') {
+                placeBlockWithBrush(block.x, block.y + 1, block.z);
+            } else if (currentTool === 'remove') {
+                removeBlock(block.x, block.y, block.z);
+            } else if (currentTool === 'replace') {
+                setBlock(block.x, block.y, block.z, currentBlock);
+            }
+            saveToHistory();
+            updateStats();
+            render();
+        }
+    } else if (viewMode === '2d') {
+        const pos = get2DPosition(e);
+        if (pos) {
+            if (currentTool === 'place') {
+                setBlock(pos.x, 62, pos.z, currentBlock);
+            } else if (currentTool === 'remove') {
+                for (let y = 70; y >= 55; y--) {
+                    if (getBlock(pos.x, y, pos.z) !== 'air') {
+                        setBlock(pos.x, y, pos.z, 'air');
+                        break;
+                    }
+                }
+            }
+            saveToHistory();
+            updateStats();
+            render();
+        }
+    }
 }
 
 function onMouseMove(e) {
-    if (mouseDown) {
+    if (mouseDown && e.buttons === 1 && viewMode === '3d') {
         const dx = e.clientX - lastMouseX;
         const dy = e.clientY - lastMouseY;
-        if (e.buttons === 1) {
-            // Rotate view
-            camera.rotY += dx * 0.5;
-            camera.rotX += dy * 0.5;
-            camera.rotX = Math.min(89, Math.max(-89, camera.rotX));
-        }
+        camera.rotY += dx * 0.5;
+        camera.rotX += dy * 0.5;
+        camera.rotX = Math.min(89, Math.max(-89, camera.rotX));
         lastMouseX = e.clientX;
         lastMouseY = e.clientY;
+        render();
     }
-    updateHoverPosition(e);
+    
+    // Update hover info
+    if (viewMode === '3d') {
+        const block = getBlockUnderMouse(e);
+        if (block) {
+            document.getElementById('selX').innerText = block.x;
+            document.getElementById('selY').innerText = block.y;
+            document.getElementById('selZ').innerText = block.z;
+            document.getElementById('selBlock').innerText = BLOCKS[block.blockType]?.name || block.blockType;
+            document.getElementById('selId').innerText = BLOCKS[block.blockType]?.id || 0;
+            selectedBlockPos = block;
+        } else {
+            selectedBlockPos = null;
+        }
+    }
 }
 
 function onMouseWheel(e) {
     e.preventDefault();
-    camera.z += e.deltaY * 0.1;
+    camera.zoom += e.deltaY * -0.005;
+    camera.zoom = Math.min(2, Math.max(0.5, camera.zoom));
+    document.getElementById('camZoom').innerText = Math.round(camera.zoom * 100);
+    render();
 }
 
-function handleBlockPlacement(e) {
+function getBlockUnderMouse(e) {
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const mouseX = (e.clientX - rect.left) * (width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (height / rect.height);
     
-    // Find block under mouse
-    for (const [key, blockType] of Object.entries(worldData)) {
+    let closestBlock = null;
+    let minDist = 30;
+    
+    for (const [key, blockType] of worldData) {
         const [x, y, z] = key.split(',').map(Number);
-        const screenX = projectX(x, z, y);
-        const screenY = projectY(x, z, y);
-        const size = 12;
-        
-        if (Math.abs(mouseX - screenX) < size && Math.abs(mouseY - screenY) < size) {
-            if (currentTool === 'place') {
-                placeBlockWithBrush(x, y + 1, z);
-            } else if (currentTool === 'remove') {
-                removeBlock(x, y, z);
-            } else if (currentTool === 'replace') {
-                setBlock(x, y, z, currentBlock);
+        const pos = project3D(x, y, z);
+        if (pos) {
+            const dist = Math.hypot(mouseX - pos.x, mouseY - pos.y);
+            if (dist < minDist) {
+                minDist = dist;
+                closestBlock = { x, y, z, blockType };
             }
-            saveToHistory();
-            updateWorldStats();
-            break;
         }
     }
+    
+    return closestBlock;
 }
 
+function get2DPosition(e) {
+    const rect = canvas.getBoundingClientRect();
+    const cellSize = Math.min(width / 70, height / 70);
+    const offsetX = (width - 60 * cellSize) / 2;
+    const offsetY = (height - 60 * cellSize) / 2;
+    
+    const mouseX = (e.clientX - rect.left) * (width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (height / rect.height);
+    
+    const x = Math.round((mouseX - offsetX) / cellSize) - 30;
+    const z = Math.round((mouseY - offsetY) / cellSize) - 30;
+    
+    if (x >= -30 && x <= 30 && z >= -30 && z <= 30) {
+        return { x, z };
+    }
+    return null;
+}
+
+// ==================== BRUSH FUNCTIONS ====================
 function placeBlockWithBrush(cx, cy, cz) {
-    if (brushShape === 'cube') {
-        for (let x = cx - brushSize; x <= cx + brushSize; x++) {
-            for (let y = cy - brushSize; y <= cy + brushSize; y++) {
-                for (let z = cz - brushSize; z <= cz + brushSize; z++) {
-                    if (Math.abs(x - cx) <= brushSize && Math.abs(y - cy) <= brushSize && Math.abs(z - cz) <= brushSize) {
-                        setBlock(x, y, z, currentBlock);
-                    }
-                }
-            }
-        }
-    } else if (brushShape === 'sphere') {
-        for (let x = cx - brushSize; x <= cx + brushSize; x++) {
-            for (let y = cy - brushSize; y <= cy + brushSize; y++) {
-                for (let z = cz - brushSize; z <= cz + brushSize; z++) {
+    for (let x = cx - brushSize; x <= cx + brushSize; x++) {
+        for (let y = cy - brushSize; y <= cy + brushSize; y++) {
+            for (let z = cz - brushSize; z <= cz + brushSize; z++) {
+                if (brushShape === 'cube') {
+                    setBlock(x, y, z, currentBlock);
+                } else if (brushShape === 'sphere') {
                     const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2);
                     if (dist <= brushSize) {
                         setBlock(x, y, z, currentBlock);
@@ -395,48 +523,7 @@ function removeBlock(x, y, z) {
     setBlock(x, y, z, 'air');
 }
 
-// ==================== 2D RENDERING ====================
-function render2DView() {
-    const miniMap = document.getElementById('miniMap');
-    if (!miniMap) return;
-    
-    const size = 400;
-    const cellSize = size / 50;
-    
-    miniMap.innerHTML = `<canvas id="miniMapCanvas" width="${size}" height="${size}" style="background: #1a1a2a; border-radius: 8px;"></canvas>`;
-    const mapCtx = document.getElementById('miniMapCanvas')?.getContext('2d');
-    if (!mapCtx) return;
-    
-    for (let x = -25; x < 25; x++) {
-        for (let z = -25; z < 25; z++) {
-            let highestBlock = 'air';
-            for (let y = 70; y >= 55; y--) {
-                const block = getBlock(x, y, z);
-                if (block !== 'air') {
-                    highestBlock = block;
-                    break;
-                }
-            }
-            
-            const blockInfo = BLOCKS[highestBlock];
-            const screenX = (x + 25) * cellSize;
-            const screenY = (z + 25) * cellSize;
-            
-            mapCtx.fillStyle = blockInfo.color;
-            mapCtx.fillRect(screenX, screenY, cellSize - 1, cellSize - 1);
-            
-            mapCtx.fillStyle = '#FFF';
-            mapCtx.font = `${cellSize * 0.6}px Arial`;
-            mapCtx.fillText(blockInfo.emoji, screenX + cellSize * 0.2, screenY + cellSize * 0.7);
-        }
-    }
-    
-    mapCtx.strokeStyle = '#FFD700';
-    mapCtx.lineWidth = 2;
-    mapCtx.strokeRect(0, 0, size, size);
-}
-
-// ==================== ADVANCED BUILDING TOOLS ====================
+// ==================== TERRAIN GENERATION ====================
 function generateTree(x, y, z) {
     // Trunk
     for (let h = 0; h < 4; h++) {
@@ -452,49 +539,45 @@ function generateTree(x, y, z) {
             }
         }
     }
-    // Top leaves
     setBlock(x, y + 5, z, 'leaves');
-    setBlock(x + 1, y + 5, z, 'leaves');
-    setBlock(x - 1, y + 5, z, 'leaves');
-    setBlock(x, y + 5, z + 1, 'leaves');
-    setBlock(x, y + 5, z - 1, 'leaves');
 }
 
 function generateTrees() {
-    for (let i = 0; i < 20; i++) {
-        const x = Math.floor(Math.random() * 40) - 20;
-        const z = Math.floor(Math.random() * 40) - 20;
+    for (let i = 0; i < 25; i++) {
+        const x = Math.floor(Math.random() * 50) - 25;
+        const z = Math.floor(Math.random() * 50) - 25;
         let y = 61;
         while (getBlock(x, y, z) === 'air' && y > 55) y--;
         generateTree(x, y + 1, z);
     }
-    showToast('Generated 20 trees!');
+    showToast('Generated 25 trees!');
     saveToHistory();
-    updateWorldStats();
+    updateStats();
+    render();
 }
 
 function generateOres() {
     const ores = ['coal', 'iron', 'gold', 'diamond', 'emerald'];
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 150; i++) {
         const x = Math.floor(Math.random() * 50) - 25;
         const z = Math.floor(Math.random() * 50) - 25;
-        const y = 40 + Math.floor(Math.random() * 20);
+        const y = 40 + Math.floor(Math.random() * 25);
         const ore = ores[Math.floor(Math.random() * ores.length)];
         setBlock(x, y, z, ore);
     }
     showToast('Generated ores!');
     saveToHistory();
-    updateWorldStats();
+    updateStats();
+    render();
 }
 
 function smoothTerrain() {
-    const newTerrain = {};
+    const newHeights = new Map();
     
-    for (let x = -25; x < 25; x++) {
-        for (let z = -25; z < 25; z++) {
-            let totalHeight = 0;
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            let total = 0;
             let count = 0;
-            
             for (let dx = -1; dx <= 1; dx++) {
                 for (let dz = -1; dz <= 1; dz++) {
                     let height = 60;
@@ -504,15 +587,20 @@ function smoothTerrain() {
                             break;
                         }
                     }
-                    totalHeight += height;
+                    total += height;
                     count++;
                 }
             }
-            
-            const avgHeight = Math.floor(totalHeight / count);
+            newHeights.set(`${x},${z}`, Math.floor(total / count));
+        }
+    }
+    
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            const newHeight = newHeights.get(`${x},${z}`);
             for (let y = 55; y <= 70; y++) {
-                if (y <= avgHeight) {
-                    const blockType = y === avgHeight ? 'grass' : (y > avgHeight - 3 ? 'dirt' : 'stone');
+                if (y <= newHeight) {
+                    const blockType = y === newHeight ? 'grass' : (y > newHeight - 3 ? 'dirt' : 'stone');
                     setBlock(x, y, z, blockType);
                 } else {
                     setBlock(x, y, z, 'air');
@@ -523,87 +611,50 @@ function smoothTerrain() {
     
     showToast('Terrain smoothed!');
     saveToHistory();
-    updateWorldStats();
+    updateStats();
+    render();
 }
 
-function startAreaSelection() {
-    showToast('Click and drag to select area (coming soon)');
-}
-
-function fillSelectedArea() {
-    if (!selectedArea) {
-        showToast('No area selected!');
-        return;
-    }
-    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
-        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
-            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
-                setBlock(x, y, z, currentBlock);
-            }
-        }
-    }
-    showToast('Area filled!');
-    saveToHistory();
-    updateWorldStats();
-}
-
-function copySelectedArea() {
-    if (!selectedArea) {
-        showToast('No area selected!');
-        return;
-    }
-    clipboard = [];
-    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
-        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
-            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
-                const block = getBlock(x, y, z);
-                if (block !== 'air') {
-                    clipboard.push({ x, y, z, block, offsetX: x - selectedArea.x1, offsetY: y - selectedArea.y1, offsetZ: z - selectedArea.z1 });
-                }
-            }
-        }
-    }
-    showToast(`Copied ${clipboard.length} blocks!`);
-}
-
-function pasteArea() {
-    if (!clipboard || clipboard.length === 0) {
-        showToast('Nothing to paste!');
-        return;
-    }
-    const pos = { x: parseInt(document.getElementById('posX')?.innerText) || 0, 
-                  y: parseInt(document.getElementById('posY')?.innerText) || 0, 
-                  z: parseInt(document.getElementById('posZ')?.innerText) || 0 };
+function clearArea() {
+    const radius = 10;
+    const centerX = Math.round(camera.targetX);
+    const centerZ = Math.round(camera.targetZ);
     
-    clipboard.forEach(item => {
-        setBlock(pos.x + item.offsetX, pos.y + item.offsetY, pos.z + item.offsetZ, item.block);
-    });
-    showToast('Pasted!');
-    saveToHistory();
-    updateWorldStats();
-}
-
-function clearSelectedArea() {
-    if (!selectedArea) {
-        showToast('No area selected!');
-        return;
-    }
-    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
-        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
-            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+        for (let z = centerZ - radius; z <= centerZ + radius; z++) {
+            for (let y = 55; y <= 70; y++) {
                 setBlock(x, y, z, 'air');
             }
         }
     }
+    
     showToast('Area cleared!');
     saveToHistory();
-    updateWorldStats();
+    updateStats();
+    render();
 }
 
-// ==================== HISTORY & UNDO/REDO ====================
+// ==================== WORLD MANAGEMENT ====================
+function updateStats() {
+    const totalBlocks = worldData.size;
+    const uniqueBlocks = new Set(worldData.values()).size;
+    const sizeKB = Math.round(totalBlocks * 0.05);
+    
+    document.getElementById('totalBlocks').innerText = totalBlocks;
+    document.getElementById('uniqueBlocks').innerText = uniqueBlocks;
+    document.getElementById('worldSize').innerText = sizeKB;
+    
+    document.getElementById('camRotX').innerText = Math.round(camera.rotX);
+    document.getElementById('camRotY').innerText = Math.round(camera.rotY);
+}
+
 function saveToHistory() {
     history = history.slice(0, historyIndex + 1);
-    history.push(JSON.parse(JSON.stringify(worldData)));
+    const snapshot = new Map();
+    for (const [key, value] of worldData) {
+        snapshot.set(key, value);
+    }
+    history.push(snapshot);
     historyIndex++;
     if (history.length > 50) {
         history.shift();
@@ -614,10 +665,12 @@ function saveToHistory() {
 function undo() {
     if (historyIndex > 0) {
         historyIndex--;
-        worldData = JSON.parse(JSON.stringify(history[historyIndex]));
-        updateWorldStats();
-        render3DView();
-        render2DView();
+        worldData = new Map();
+        for (const [key, value] of history[historyIndex]) {
+            worldData.set(key, value);
+        }
+        updateStats();
+        render();
         showToast('Undo');
     }
 }
@@ -625,75 +678,119 @@ function undo() {
 function redo() {
     if (historyIndex < history.length - 1) {
         historyIndex++;
-        worldData = JSON.parse(JSON.stringify(history[historyIndex]));
-        updateWorldStats();
-        render3DView();
-        render2DView();
+        worldData = new Map();
+        for (const [key, value] of history[historyIndex]) {
+            worldData.set(key, value);
+        }
+        updateStats();
+        render();
         showToast('Redo');
     }
 }
 
-// ==================== WORLD STATS ====================
-function updateWorldStats() {
-    const totalBlocks = Object.keys(worldData).length;
-    const uniqueBlocks = new Set(Object.values(worldData)).size;
-    
-    document.getElementById('totalBlocks').innerText = totalBlocks;
-    document.getElementById('uniqueBlocks').innerText = uniqueBlocks;
-    document.getElementById('worldSize').innerText = Math.round(totalBlocks * 0.1);
-}
-
-function updateHoverPosition(e) {
-    const rect = canvas?.getBoundingClientRect();
-    if (!rect) return;
-    
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
-    for (const [key, blockType] of Object.entries(worldData)) {
-        const [x, y, z] = key.split(',').map(Number);
-        const screenX = projectX(x, z, y);
-        const screenY = projectY(x, z, y);
-        const size = 12;
-        
-        if (Math.abs(mouseX - screenX) < size && Math.abs(mouseY - screenY) < size) {
-            document.getElementById('hoverX').innerText = x;
-            document.getElementById('hoverY').innerText = y;
-            document.getElementById('hoverZ').innerText = z;
-            document.getElementById('selectedBlock').innerText = BLOCKS[blockType]?.name || blockType;
-            break;
-        }
-    }
-}
-
-// ==================== SAVE & EXPORT ====================
 function saveWorld() {
-    showToast('World saved!');
     saveToHistory();
+    showToast('World saved!');
 }
 
 async function exportWorld() {
     showLoading(true);
     try {
-        if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
-        
         const zip = new JSZip();
-        const levelDat = JSON.stringify(worldData);
-        zip.file('level.dat', levelDat);
-        zip.file('levelname.txt', 'Edited World');
         
-        const content = await zip.generateAsync({ type: 'blob' });
+        // Create level.dat with world data
+        const worldDataObj = {};
+        for (const [key, value] of worldData) {
+            worldDataObj[key] = value;
+        }
+        
+        const levelDat = JSON.stringify({
+            worldData: worldDataObj,
+            version: "1.0",
+            generator: "Minecraft World Editor Pro"
+        }, null, 2);
+        
+        zip.file("level.dat", levelDat);
+        zip.file("levelname.txt", "Edited World");
+        
+        // Create world icon
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const iconCtx = canvas.getContext('2d');
+        iconCtx.fillStyle = '#5c6bc0';
+        iconCtx.fillRect(0, 0, 64, 64);
+        iconCtx.fillStyle = '#fff';
+        iconCtx.font = '40px Arial';
+        iconCtx.fillText('⛏️', 12, 48);
+        const iconBlob = await new Promise(resolve => canvas.toBlob(resolve));
+        zip.file("world_icon.jpeg", iconBlob);
+        
+        const content = await zip.generateAsync({ type: "blob" });
         const url = URL.createObjectURL(content);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'minecraft_world_edited.mcworld';
+        a.download = `minecraft_world_${Date.now()}.mcworld`;
         a.click();
         URL.revokeObjectURL(url);
         
-        showToast('World exported successfully!');
+        showToast('World exported as .mcworld!');
     } catch (error) {
         console.error('Export error:', error);
-        alert('Export error: ' + error.message);
+        alert('Export failed: ' + error.message);
+    } finally {
+        showLoading(false);
+    }
+}
+
+// ==================== IMPORT FUNCTIONS ====================
+async function handleFolderImport(event) {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
+    
+    showLoading(true);
+    
+    setTimeout(() => {
+        document.getElementById('importOverlay').style.display = 'none';
+        document.getElementById('mainLayout').style.display = 'flex';
+        showLoading(false);
+        resizeCanvas();
+        render();
+        showToast('World imported successfully!');
+    }, 1000);
+}
+
+async function handleMcworldImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    showLoading(true);
+    
+    try {
+        const zip = await JSZip.loadAsync(file);
+        const levelDatFile = zip.file("level.dat");
+        
+        if (levelDatFile) {
+            const content = await levelDatFile.async("string");
+            const data = JSON.parse(content);
+            
+            if (data.worldData) {
+                worldData.clear();
+                for (const [key, value] of Object.entries(data.worldData)) {
+                    worldData.set(key, value);
+                }
+            }
+        }
+        
+        document.getElementById('importOverlay').style.display = 'none';
+        document.getElementById('mainLayout').style.display = 'flex';
+        resizeCanvas();
+        render();
+        updateStats();
+        showToast('.mcworld file loaded successfully!');
+    } catch (error) {
+        console.error('Import error:', error);
+        alert('Failed to import .mcworld file: ' + error.message);
     } finally {
         showLoading(false);
     }
@@ -708,17 +805,7 @@ function showLoading(show) {
 function showToast(message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
-    toast.innerHTML = `✓ ${message}`;
+    toast.innerText = message;
     document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-function isHoveringBlock(block) {
-    const hoverX = parseInt(document.getElementById('hoverX')?.innerText || '-1');
-    const hoverY = parseInt(document.getElementById('hoverY')?.innerText || '-1');
-    const hoverZ = parseInt(document.getElementById('hoverZ')?.innerText || '-1');
-    return block.x === hoverX && block.y === hoverY && block.z === hoverZ;
-}
+    setTimeout(() => toast.remove(), 2000);
+        }
