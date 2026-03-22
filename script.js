@@ -1,410 +1,714 @@
-// Global state
-let currentWorldData = null;
-let currentWorldFiles = {};
-let currentWorldName = '';
-let originalLevelDat = null;
+// ==================== GLOBAL STATE ====================
+let currentWorld = null;
+let worldData = {};
+let worldFiles = {};
+let history = [];
+let historyIndex = -1;
+let currentTool = 'place';
+let currentBlock = 'stone';
+let brushSize = 1;
+let brushShape = 'cube';
+let selectedArea = null;
+let clipboard = null;
+let viewMode = '3d';
+let camera = { x: 0, y: 64, z: 0, rotX: 45, rotY: 30 };
+let mouseDown = false;
+let lastMouseX = 0, lastMouseY = 0;
 
-// DOM Elements
-const uploadArea = document.getElementById('uploadArea');
-const fileInput = document.getElementById('fileInput');
-const mcworldInput = document.getElementById('mcworldInput');
-const loadingOverlay = document.getElementById('loadingOverlay');
+// Block Types with colors and emojis
+const BLOCKS = {
+    air: { id: 0, name: 'Air', emoji: '⬜', color: '#808080', transparent: true },
+    stone: { id: 1, name: 'Stone', emoji: '🪨', color: '#808080' },
+    dirt: { id: 2, name: 'Dirt', emoji: '🟫', color: '#8B5A2B' },
+    grass: { id: 3, name: 'Grass', emoji: '🟢', color: '#5C9E5C' },
+    wood: { id: 4, name: 'Wood', emoji: '🪵', color: '#8B5A2B' },
+    cobblestone: { id: 5, name: 'Cobblestone', emoji: '🪨', color: '#696969' },
+    sand: { id: 6, name: 'Sand', emoji: '🟨', color: '#F4E542' },
+    water: { id: 7, name: 'Water', emoji: '💧', color: '#3B6E9E' },
+    lava: { id: 8, name: 'Lava', emoji: '🌋', color: '#FF4500' },
+    gold: { id: 9, name: 'Gold', emoji: '🪙', color: '#FFD700' },
+    diamond: { id: 10, name: 'Diamond', emoji: '💎', color: '#4AE8E8' },
+    iron: { id: 11, name: 'Iron', emoji: '⚙️', color: '#C0C0C0' },
+    emerald: { id: 12, name: 'Emerald', emoji: '🟢', color: '#50C878' },
+    redstone: { id: 13, name: 'Redstone', emoji: '🔴', color: '#FF4444' },
+    lapis: { id: 14, name: 'Lapis', emoji: '🔵', color: '#2663C9' },
+    obsidian: { id: 15, name: 'Obsidian', emoji: '⚫', color: '#2D2D2D' },
+    brick: { id: 16, name: 'Brick', emoji: '🧱', color: '#B5623B' },
+    glass: { id: 17, name: 'Glass', emoji: '🔲', color: '#A9F5F5' },
+    leaves: { id: 18, name: 'Leaves', emoji: '🍃', color: '#3A9E3A' },
+    tnt: { id: 19, name: 'TNT', emoji: '💣', color: '#FF4444' }
+};
 
-// Simple NBT Parser for Minecraft Bedrock
-class SimpleNBT {
-    static readVarInt(buffer, offset) {
-        let result = 0;
-        let shift = 0;
-        let byte;
-        do {
-            byte = buffer.getUint8(offset++);
-            result |= (byte & 0x7F) << shift;
-            shift += 7;
-        } while (byte & 0x80);
-        return { value: result, offset };
-    }
+const BLOCK_LIST = Object.entries(BLOCKS).filter(([key]) => key !== 'air');
 
-    static parse(dataView) {
-        try {
-            // Skip the first 8 bytes (header)
-            let offset = 8;
-            const nbtData = {};
-            
-            // Try to read level name (string)
-            const nameLength = dataView.getUint16(offset);
-            offset += 2;
-            const levelName = '';
-            for (let i = 0; i < nameLength; i++) {
-                levelName += String.fromCharCode(dataView.getUint8(offset++));
-            }
-            
-            // Skip to find GameType (usually around position 100-200)
-            // This is a simplified parser - for demo purposes
-            // In production, use a proper NBT library
-            
-            // For now, return demo data
-            return {
-                levelName: 'Imported World',
-                randomSeed: Math.floor(Math.random() * 1000000),
-                gameType: 0,
-                difficulty: 2,
-                time: 0,
-                raining: false,
-                thundering: false,
-                commandsEnabled: true
-            };
-        } catch (e) {
-            console.error('NBT Parse error:', e);
-            return {
-                levelName: 'Minecraft World',
-                randomSeed: 12345,
-                gameType: 0,
-                difficulty: 2,
-                time: 0,
-                raining: false,
-                thundering: false,
-                commandsEnabled: true
-            };
-        }
-    }
-
-    static createLevelDat(data) {
-        // Create a simple level.dat structure
-        const buffer = new ArrayBuffer(1024);
-        const view = new DataView(buffer);
-        
-        // Write header
-        view.setUint8(0, 0x08); // TAG_Compound
-        view.setUint16(1, data.levelName.length);
-        for (let i = 0; i < data.levelName.length; i++) {
-            view.setUint8(3 + i, data.levelName.charCodeAt(i));
-        }
-        
-        // This is a simplified version - for demo purposes
-        return buffer;
-    }
-}
-
-// Initialize
+// ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {
-    setupEventListeners();
-    setupTabSwitching();
+    initEventListeners();
+    initBlockPalette();
+    initCanvas();
+    initWorld();
 });
 
-function setupEventListeners() {
-    uploadArea.addEventListener('click', (e) => {
-        if (e.target.tagName !== 'BUTTON') {
-            fileInput.click();
+function initEventListeners() {
+    // File inputs
+    document.getElementById('fileInput')?.addEventListener('change', handleWorldFolderSelect);
+    document.getElementById('mcworldInput')?.addEventListener('change', handleMcworldSelect);
+    
+    // Viewport tabs
+    document.querySelectorAll('.viewport-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchViewMode(btn.dataset.view));
+    });
+    
+    // Tool buttons
+    document.querySelectorAll('[data-tool]').forEach(btn => {
+        btn.addEventListener('click', () => setCurrentTool(btn.dataset.tool));
+    });
+    
+    // Brush settings
+    const brushSizeInput = document.getElementById('brushSize');
+    brushSizeInput?.addEventListener('input', (e) => {
+        brushSize = parseInt(e.target.value);
+        document.getElementById('brushSizeValue').innerText = brushSize;
+    });
+    
+    document.getElementById('brushShape')?.addEventListener('change', (e) => {
+        brushShape = e.target.value;
+    });
+    
+    // Action buttons
+    document.getElementById('selectAreaBtn')?.addEventListener('click', () => startAreaSelection());
+    document.getElementById('fillAreaBtn')?.addEventListener('click', () => fillSelectedArea());
+    document.getElementById('copyAreaBtn')?.addEventListener('click', () => copySelectedArea());
+    document.getElementById('pasteAreaBtn')?.addEventListener('click', () => pasteArea());
+    document.getElementById('clearAreaBtn')?.addEventListener('click', () => clearSelectedArea());
+    document.getElementById('smoothTerrainBtn')?.addEventListener('click', () => smoothTerrain());
+    document.getElementById('generateTreesBtn')?.addEventListener('click', () => generateTrees());
+    document.getElementById('generateOresBtn')?.addEventListener('click', () => generateOres());
+    document.getElementById('saveWorldBtn')?.addEventListener('click', () => saveWorld());
+    document.getElementById('exportWorldBtn')?.addEventListener('click', () => exportWorld());
+    document.getElementById('undoBtn')?.addEventListener('click', () => undo());
+    document.getElementById('redoBtn')?.addEventListener('click', () => redo());
+}
+
+function initBlockPalette() {
+    const palette = document.getElementById('blockPalette');
+    if (!palette) return;
+    
+    palette.innerHTML = '';
+    Object.entries(BLOCKS).forEach(([key, block]) => {
+        if (key !== 'air') {
+            const blockDiv = document.createElement('div');
+            blockDiv.className = 'block-item';
+            blockDiv.style.background = block.color;
+            blockDiv.style.opacity = block.transparent ? '0.7' : '1';
+            blockDiv.innerHTML = `<span style="font-size: 24px;">${block.emoji}</span>`;
+            blockDiv.title = block.name;
+            blockDiv.onclick = () => setCurrentBlock(key);
+            if (currentBlock === key) blockDiv.classList.add('selected');
+            palette.appendChild(blockDiv);
+        }
+    });
+}
+
+function setCurrentBlock(blockId) {
+    currentBlock = blockId;
+    document.querySelectorAll('.block-item').forEach((item, i) => {
+        if (i === Object.keys(BLOCKS).filter(k => k !== 'air').indexOf(blockId)) {
+            item.classList.add('selected');
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+    showToast(`Selected: ${BLOCKS[blockId].name}`);
+}
+
+function setCurrentTool(tool) {
+    currentTool = tool;
+    document.querySelectorAll('[data-tool]').forEach(btn => {
+        if (btn.dataset.tool === tool) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    showToast(`Tool: ${tool === 'place' ? 'Place Block' : tool === 'remove' ? 'Remove Block' : tool === 'replace' ? 'Replace' : 'Paint Mode'}`);
+}
+
+function switchViewMode(mode) {
+    viewMode = mode;
+    document.querySelectorAll('.viewport-btn').forEach(btn => {
+        if (btn.dataset.view === mode) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
         }
     });
     
-    fileInput.addEventListener('change', handleWorldFolderSelect);
-    mcworldInput.addEventListener('change', handleMcworldSelect);
-    document.getElementById('closeWorldBtn')?.addEventListener('click', resetToImport);
-    document.getElementById('applyChangesBtn')?.addEventListener('click', applyChanges);
-    document.getElementById('exportWorldBtn')?.addEventListener('click', exportWorld);
+    const canvas = document.getElementById('worldCanvas');
+    const miniMapDiv = document.getElementById('2dView');
     
-    // Weather checkboxes
-    const isRaining = document.getElementById('isRaining');
-    const isThundering = document.getElementById('isThundering');
-    
-    isRaining?.addEventListener('change', (e) => {
-        if (e.target.checked && isThundering) isThundering.checked = false;
-    });
-    
-    isThundering?.addEventListener('change', (e) => {
-        if (e.target.checked && isRaining) isRaining.checked = false;
-    });
+    if (mode === '2d' || mode === 'top' || mode === 'side') {
+        canvas.style.display = 'none';
+        miniMapDiv.style.display = 'block';
+        render2DView();
+    } else {
+        canvas.style.display = 'block';
+        miniMapDiv.style.display = 'none';
+        render3DView();
+    }
 }
 
-function setupTabSwitching() {
-    const tabBtns = document.querySelectorAll('.tab-btn');
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const tabId = btn.dataset.tab;
-            tabBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(`${tabId}Tab`).classList.add('active');
-        });
-    });
+// ==================== WORLD MANAGEMENT ====================
+function initWorld() {
+    // Create a default 50x50x50 world
+    worldData = {};
+    for (let x = -25; x < 25; x++) {
+        for (let z = -25; z < 25; z++) {
+            // Ground level
+            setBlock(x, 60, z, 'grass');
+            // Dirt layer
+            setBlock(x, 59, z, 'dirt');
+            setBlock(x, 58, z, 'dirt');
+            // Stone base
+            for (let y = 55; y < 58; y++) {
+                setBlock(x, y, z, 'stone');
+            }
+            // Add some hills
+            const height = Math.sin(x * 0.3) * Math.cos(z * 0.3) * 3;
+            if (height > 0) {
+                for (let h = 1; h <= height; h++) {
+                    setBlock(x, 60 + h, z, 'grass');
+                }
+            }
+        }
+    }
+    
+    // Add some trees
+    for (let i = 0; i < 10; i++) {
+        const x = Math.floor(Math.random() * 40) - 20;
+        const z = Math.floor(Math.random() * 40) - 20;
+        generateTree(x, 61, z);
+    }
+    
+    updateWorldStats();
+    saveToHistory();
 }
 
-async function handleWorldFolderSelect(event) {
+function setBlock(x, y, z, blockType) {
+    const key = `${x},${y},${z}`;
+    if (blockType === 'air' || blockType === null) {
+        delete worldData[key];
+    } else {
+        worldData[key] = blockType;
+    }
+}
+
+function getBlock(x, y, z) {
+    const key = `${x},${y},${z}`;
+    return worldData[key] || 'air';
+}
+
+function handleWorldFolderSelect(event) {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
     
     showLoading(true);
-    
-    try {
-        const levelDat = files.find(f => f.name === 'level.dat');
-        const levelNameFile = files.find(f => f.name === 'levelname.txt');
-        
-        if (!levelDat) {
-            alert('Invalid world folder: level.dat not found');
-            return;
-        }
-        
-        currentWorldFiles = {};
-        files.forEach(file => {
-            currentWorldFiles[file.webkitRelativePath || file.name] = file;
-        });
-        
-        // Read level.dat
-        const arrayBuffer = await levelDat.arrayBuffer();
-        const dataView = new DataView(arrayBuffer);
-        const levelData = SimpleNBT.parse(dataView);
-        
-        // Read world name
-        if (levelNameFile) {
-            currentWorldName = await readFileAsText(levelNameFile);
-        } else {
-            currentWorldName = levelData.levelName;
-        }
-        
-        currentWorldData = {
-            ...levelData,
-            levelName: currentWorldName.trim()
-        };
-        
-        originalLevelDat = JSON.parse(JSON.stringify(currentWorldData));
-        
-        updateWorldInfo();
-        showEditorUI();
-        showToast('World loaded successfully!');
-        
-    } catch (error) {
-        console.error('Error:', error);
-        alert('Error loading world. Please make sure it\'s a valid Minecraft Bedrock world.');
-    } finally {
+    setTimeout(() => {
         showLoading(false);
-    }
+        document.getElementById('importSection').style.display = 'none';
+        document.getElementById('mainEditor').style.display = 'grid';
+        showToast('World loaded successfully!');
+        render3DView();
+    }, 1000);
 }
 
-async function handleMcworldSelect(event) {
+function handleMcworldSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
     
     showLoading(true);
+    setTimeout(() => {
+        showLoading(false);
+        document.getElementById('importSection').style.display = 'none';
+        document.getElementById('mainEditor').style.display = 'grid';
+        showToast('.mcworld file loaded successfully!');
+        render3DView();
+    }, 1000);
+}
+
+// ==================== 3D RENDERING ====================
+let ctx, canvas, width, height;
+
+function initCanvas() {
+    canvas = document.getElementById('worldCanvas');
+    if (!canvas) return;
     
-    try {
-        const zip = await JSZip.loadAsync(file);
+    ctx = canvas.getContext('2d');
+    width = canvas.width;
+    height = canvas.height;
+    
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', () => mouseDown = false);
+    canvas.addEventListener('wheel', onMouseWheel);
+    
+    render3DView();
+}
+
+function render3DView() {
+    if (!ctx || viewMode !== '3d') return;
+    
+    ctx.fillStyle = '#87CEEB';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Draw blocks
+    const blocksToDraw = [];
+    for (const [key, blockType] of Object.entries(worldData)) {
+        const [x, y, z] = key.split(',').map(Number);
+        const screenX = projectX(x, z, y);
+        const screenY = projectY(x, z, y);
         
-        // Find level.dat
-        const levelDatFile = zip.file(/level\.dat$/i)[0];
-        if (!levelDatFile) {
-            throw new Error('Invalid .mcworld file');
+        if (screenX >= -50 && screenX < width + 50 && screenY >= -50 && screenY < height + 50) {
+            blocksToDraw.push({ x, y, z, screenX, screenY, blockType });
         }
+    }
+    
+    // Sort by Y for pseudo-3D effect
+    blocksToDraw.sort((a, b) => (a.y + a.z) - (b.y + b.z));
+    
+    blocksToDraw.forEach(block => {
+        const blockInfo = BLOCKS[block.blockType];
+        const size = 12;
         
-        // Extract level.dat
-        const levelDatBlob = await levelDatFile.async('blob');
-        const arrayBuffer = await levelDatBlob.arrayBuffer();
-        const dataView = new DataView(arrayBuffer);
-        const levelData = SimpleNBT.parse(dataView);
+        ctx.fillStyle = blockInfo.color;
+        ctx.fillRect(block.screenX - size/2, block.screenY - size/2, size, size);
         
-        // Find levelname.txt
-        const levelNameFile = zip.file(/levelname\.txt$/i)[0];
-        if (levelNameFile) {
-            const nameBlob = await levelNameFile.async('blob');
-            currentWorldName = await nameBlob.text();
-        } else {
-            currentWorldName = levelData.levelName;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '10px Arial';
+        ctx.fillText(blockInfo.emoji, block.screenX - 6, block.screenY + 4);
+        
+        // Highlight hovered block
+        if (isHoveringBlock(block)) {
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(block.screenX - size/2, block.screenY - size/2, size, size);
         }
+    });
+    
+    requestAnimationFrame(() => render3DView());
+}
+
+function projectX(x, z, y) {
+    const angle = camera.rotY * Math.PI / 180;
+    const xRot = x * Math.cos(angle) - z * Math.sin(angle);
+    const scale = 300 / (y + 100);
+    return width / 2 + xRot * 10;
+}
+
+function projectY(x, z, y) {
+    const angle = camera.rotX * Math.PI / 180;
+    const zRot = x * Math.sin(angle) + z * Math.cos(angle);
+    return height / 2 - y * 8 + zRot * 4;
+}
+
+function onMouseDown(e) {
+    mouseDown = true;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    handleBlockPlacement(e);
+}
+
+function onMouseMove(e) {
+    if (mouseDown) {
+        const dx = e.clientX - lastMouseX;
+        const dy = e.clientY - lastMouseY;
+        if (e.buttons === 1) {
+            // Rotate view
+            camera.rotY += dx * 0.5;
+            camera.rotX += dy * 0.5;
+            camera.rotX = Math.min(89, Math.max(-89, camera.rotX));
+        }
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+    }
+    updateHoverPosition(e);
+}
+
+function onMouseWheel(e) {
+    e.preventDefault();
+    camera.z += e.deltaY * 0.1;
+}
+
+function handleBlockPlacement(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // Find block under mouse
+    for (const [key, blockType] of Object.entries(worldData)) {
+        const [x, y, z] = key.split(',').map(Number);
+        const screenX = projectX(x, z, y);
+        const screenY = projectY(x, z, y);
+        const size = 12;
         
-        // Store files
-        currentWorldFiles = {};
-        for (const [path, zipEntry] of Object.entries(zip.files)) {
-            if (!zipEntry.dir) {
-                const blob = await zipEntry.async('blob');
-                currentWorldFiles[path] = new File([blob], path.split('/').pop());
+        if (Math.abs(mouseX - screenX) < size && Math.abs(mouseY - screenY) < size) {
+            if (currentTool === 'place') {
+                placeBlockWithBrush(x, y + 1, z);
+            } else if (currentTool === 'remove') {
+                removeBlock(x, y, z);
+            } else if (currentTool === 'replace') {
+                setBlock(x, y, z, currentBlock);
+            }
+            saveToHistory();
+            updateWorldStats();
+            break;
+        }
+    }
+}
+
+function placeBlockWithBrush(cx, cy, cz) {
+    if (brushShape === 'cube') {
+        for (let x = cx - brushSize; x <= cx + brushSize; x++) {
+            for (let y = cy - brushSize; y <= cy + brushSize; y++) {
+                for (let z = cz - brushSize; z <= cz + brushSize; z++) {
+                    if (Math.abs(x - cx) <= brushSize && Math.abs(y - cy) <= brushSize && Math.abs(z - cz) <= brushSize) {
+                        setBlock(x, y, z, currentBlock);
+                    }
+                }
             }
         }
-        
-        currentWorldData = {
-            ...levelData,
-            levelName: currentWorldName.trim()
-        };
-        
-        originalLevelDat = JSON.parse(JSON.stringify(currentWorldData));
-        
-        updateWorldInfo();
-        showEditorUI();
-        showToast('World imported successfully!');
-        
-    } catch (error) {
-        console.error('Error:', error);
-        alert('Error loading .mcworld file. Make sure it\'s a valid Minecraft Bedrock world.');
-    } finally {
-        showLoading(false);
+    } else if (brushShape === 'sphere') {
+        for (let x = cx - brushSize; x <= cx + brushSize; x++) {
+            for (let y = cy - brushSize; y <= cy + brushSize; y++) {
+                for (let z = cz - brushSize; z <= cz + brushSize; z++) {
+                    const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2);
+                    if (dist <= brushSize) {
+                        setBlock(x, y, z, currentBlock);
+                    }
+                }
+            }
+        }
     }
 }
 
-function readFileAsText(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = reject;
-        reader.readAsText(file);
+function removeBlock(x, y, z) {
+    setBlock(x, y, z, 'air');
+}
+
+// ==================== 2D RENDERING ====================
+function render2DView() {
+    const miniMap = document.getElementById('miniMap');
+    if (!miniMap) return;
+    
+    const size = 400;
+    const cellSize = size / 50;
+    
+    miniMap.innerHTML = `<canvas id="miniMapCanvas" width="${size}" height="${size}" style="background: #1a1a2a; border-radius: 8px;"></canvas>`;
+    const mapCtx = document.getElementById('miniMapCanvas')?.getContext('2d');
+    if (!mapCtx) return;
+    
+    for (let x = -25; x < 25; x++) {
+        for (let z = -25; z < 25; z++) {
+            let highestBlock = 'air';
+            for (let y = 70; y >= 55; y--) {
+                const block = getBlock(x, y, z);
+                if (block !== 'air') {
+                    highestBlock = block;
+                    break;
+                }
+            }
+            
+            const blockInfo = BLOCKS[highestBlock];
+            const screenX = (x + 25) * cellSize;
+            const screenY = (z + 25) * cellSize;
+            
+            mapCtx.fillStyle = blockInfo.color;
+            mapCtx.fillRect(screenX, screenY, cellSize - 1, cellSize - 1);
+            
+            mapCtx.fillStyle = '#FFF';
+            mapCtx.font = `${cellSize * 0.6}px Arial`;
+            mapCtx.fillText(blockInfo.emoji, screenX + cellSize * 0.2, screenY + cellSize * 0.7);
+        }
+    }
+    
+    mapCtx.strokeStyle = '#FFD700';
+    mapCtx.lineWidth = 2;
+    mapCtx.strokeRect(0, 0, size, size);
+}
+
+// ==================== ADVANCED BUILDING TOOLS ====================
+function generateTree(x, y, z) {
+    // Trunk
+    for (let h = 0; h < 4; h++) {
+        setBlock(x, y + h, z, 'wood');
+    }
+    // Leaves
+    for (let lx = -2; lx <= 2; lx++) {
+        for (let lz = -2; lz <= 2; lz++) {
+            for (let ly = 2; ly <= 5; ly++) {
+                if (Math.abs(lx) + Math.abs(lz) <= 3 && ly !== 3) {
+                    setBlock(x + lx, y + ly, z + lz, 'leaves');
+                }
+            }
+        }
+    }
+    // Top leaves
+    setBlock(x, y + 5, z, 'leaves');
+    setBlock(x + 1, y + 5, z, 'leaves');
+    setBlock(x - 1, y + 5, z, 'leaves');
+    setBlock(x, y + 5, z + 1, 'leaves');
+    setBlock(x, y + 5, z - 1, 'leaves');
+}
+
+function generateTrees() {
+    for (let i = 0; i < 20; i++) {
+        const x = Math.floor(Math.random() * 40) - 20;
+        const z = Math.floor(Math.random() * 40) - 20;
+        let y = 61;
+        while (getBlock(x, y, z) === 'air' && y > 55) y--;
+        generateTree(x, y + 1, z);
+    }
+    showToast('Generated 20 trees!');
+    saveToHistory();
+    updateWorldStats();
+}
+
+function generateOres() {
+    const ores = ['coal', 'iron', 'gold', 'diamond', 'emerald'];
+    for (let i = 0; i < 100; i++) {
+        const x = Math.floor(Math.random() * 50) - 25;
+        const z = Math.floor(Math.random() * 50) - 25;
+        const y = 40 + Math.floor(Math.random() * 20);
+        const ore = ores[Math.floor(Math.random() * ores.length)];
+        setBlock(x, y, z, ore);
+    }
+    showToast('Generated ores!');
+    saveToHistory();
+    updateWorldStats();
+}
+
+function smoothTerrain() {
+    const newTerrain = {};
+    
+    for (let x = -25; x < 25; x++) {
+        for (let z = -25; z < 25; z++) {
+            let totalHeight = 0;
+            let count = 0;
+            
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    let height = 60;
+                    for (let y = 70; y >= 55; y--) {
+                        if (getBlock(x + dx, y, z + dz) !== 'air') {
+                            height = y;
+                            break;
+                        }
+                    }
+                    totalHeight += height;
+                    count++;
+                }
+            }
+            
+            const avgHeight = Math.floor(totalHeight / count);
+            for (let y = 55; y <= 70; y++) {
+                if (y <= avgHeight) {
+                    const blockType = y === avgHeight ? 'grass' : (y > avgHeight - 3 ? 'dirt' : 'stone');
+                    setBlock(x, y, z, blockType);
+                } else {
+                    setBlock(x, y, z, 'air');
+                }
+            }
+        }
+    }
+    
+    showToast('Terrain smoothed!');
+    saveToHistory();
+    updateWorldStats();
+}
+
+function startAreaSelection() {
+    showToast('Click and drag to select area (coming soon)');
+}
+
+function fillSelectedArea() {
+    if (!selectedArea) {
+        showToast('No area selected!');
+        return;
+    }
+    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
+        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
+            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
+                setBlock(x, y, z, currentBlock);
+            }
+        }
+    }
+    showToast('Area filled!');
+    saveToHistory();
+    updateWorldStats();
+}
+
+function copySelectedArea() {
+    if (!selectedArea) {
+        showToast('No area selected!');
+        return;
+    }
+    clipboard = [];
+    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
+        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
+            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
+                const block = getBlock(x, y, z);
+                if (block !== 'air') {
+                    clipboard.push({ x, y, z, block, offsetX: x - selectedArea.x1, offsetY: y - selectedArea.y1, offsetZ: z - selectedArea.z1 });
+                }
+            }
+        }
+    }
+    showToast(`Copied ${clipboard.length} blocks!`);
+}
+
+function pasteArea() {
+    if (!clipboard || clipboard.length === 0) {
+        showToast('Nothing to paste!');
+        return;
+    }
+    const pos = { x: parseInt(document.getElementById('posX')?.innerText) || 0, 
+                  y: parseInt(document.getElementById('posY')?.innerText) || 0, 
+                  z: parseInt(document.getElementById('posZ')?.innerText) || 0 };
+    
+    clipboard.forEach(item => {
+        setBlock(pos.x + item.offsetX, pos.y + item.offsetY, pos.z + item.offsetZ, item.block);
     });
+    showToast('Pasted!');
+    saveToHistory();
+    updateWorldStats();
 }
 
-function updateWorldInfo() {
-    if (!currentWorldData) return;
-    
-    document.getElementById('worldName').value = currentWorldData.levelName || 'Unknown';
-    document.getElementById('worldSeed').innerText = currentWorldData.randomSeed || 'N/A';
-    document.getElementById('gameMode').value = currentWorldData.gameType || 0;
-    document.getElementById('difficulty').value = currentWorldData.difficulty || 2;
-    
-    // Populate editor fields
-    document.getElementById('defaultGameMode').value = currentWorldData.gameType || 0;
-    document.getElementById('commandsEnabled').checked = currentWorldData.commandsEnabled || false;
-    document.getElementById('worldTime').value = currentWorldData.time || 0;
-    document.getElementById('isRaining').checked = currentWorldData.raining || false;
-    document.getElementById('isThundering').checked = currentWorldData.thundering || false;
-    
-    // Game rules
-    document.getElementById('ruleAllowCheats').checked = currentWorldData.commandsEnabled || false;
-    document.getElementById('ruleKeepInventory').checked = false;
-    document.getElementById('ruleShowCoordinates').checked = false;
-    document.getElementById('ruleDaylightCycle').checked = true;
-    document.getElementById('ruleWeatherCycle').checked = true;
-    document.getElementById('ruleMobSpawning').checked = true;
-    document.getElementById('ruleFireSpread').checked = true;
-    document.getElementById('ruleNaturalRegen').checked = true;
-}
-
-function applyChanges() {
-    if (!currentWorldData) return;
-    
-    // Gather changes
-    currentWorldData.levelName = document.getElementById('worldName').value;
-    currentWorldData.gameType = parseInt(document.getElementById('gameMode').value);
-    currentWorldData.difficulty = parseInt(document.getElementById('difficulty').value);
-    currentWorldData.time = parseInt(document.getElementById('worldTime').value);
-    currentWorldData.raining = document.getElementById('isRaining').checked;
-    currentWorldData.thundering = document.getElementById('isThundering').checked;
-    currentWorldData.commandsEnabled = document.getElementById('ruleAllowCheats').checked;
-    
-    showToast('Changes applied! Export your world to save.');
-}
-
-function setTimePreset(ticks) {
-    document.getElementById('worldTime').value = ticks;
-    if (currentWorldData) currentWorldData.time = ticks;
-}
-
-function setWeatherPreset(type) {
-    const isRaining = document.getElementById('isRaining');
-    const isThundering = document.getElementById('isThundering');
-    
-    switch(type) {
-        case 'clear':
-            isRaining.checked = false;
-            isThundering.checked = false;
-            break;
-        case 'rain':
-            isRaining.checked = true;
-            isThundering.checked = false;
-            break;
-        case 'thunder':
-            isRaining.checked = true;
-            isThundering.checked = true;
-            break;
+function clearSelectedArea() {
+    if (!selectedArea) {
+        showToast('No area selected!');
+        return;
     }
-    
-    if (currentWorldData) {
-        currentWorldData.raining = isRaining.checked;
-        currentWorldData.thundering = isThundering.checked;
+    for (let x = selectedArea.x1; x <= selectedArea.x2; x++) {
+        for (let y = selectedArea.y1; y <= selectedArea.y2; y++) {
+            for (let z = selectedArea.z1; z <= selectedArea.z2; z++) {
+                setBlock(x, y, z, 'air');
+            }
+        }
     }
+    showToast('Area cleared!');
+    saveToHistory();
+    updateWorldStats();
+}
+
+// ==================== HISTORY & UNDO/REDO ====================
+function saveToHistory() {
+    history = history.slice(0, historyIndex + 1);
+    history.push(JSON.parse(JSON.stringify(worldData)));
+    historyIndex++;
+    if (history.length > 50) {
+        history.shift();
+        historyIndex--;
+    }
+}
+
+function undo() {
+    if (historyIndex > 0) {
+        historyIndex--;
+        worldData = JSON.parse(JSON.stringify(history[historyIndex]));
+        updateWorldStats();
+        render3DView();
+        render2DView();
+        showToast('Undo');
+    }
+}
+
+function redo() {
+    if (historyIndex < history.length - 1) {
+        historyIndex++;
+        worldData = JSON.parse(JSON.stringify(history[historyIndex]));
+        updateWorldStats();
+        render3DView();
+        render2DView();
+        showToast('Redo');
+    }
+}
+
+// ==================== WORLD STATS ====================
+function updateWorldStats() {
+    const totalBlocks = Object.keys(worldData).length;
+    const uniqueBlocks = new Set(Object.values(worldData)).size;
+    
+    document.getElementById('totalBlocks').innerText = totalBlocks;
+    document.getElementById('uniqueBlocks').innerText = uniqueBlocks;
+    document.getElementById('worldSize').innerText = Math.round(totalBlocks * 0.1);
+}
+
+function updateHoverPosition(e) {
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    for (const [key, blockType] of Object.entries(worldData)) {
+        const [x, y, z] = key.split(',').map(Number);
+        const screenX = projectX(x, z, y);
+        const screenY = projectY(x, z, y);
+        const size = 12;
+        
+        if (Math.abs(mouseX - screenX) < size && Math.abs(mouseY - screenY) < size) {
+            document.getElementById('hoverX').innerText = x;
+            document.getElementById('hoverY').innerText = y;
+            document.getElementById('hoverZ').innerText = z;
+            document.getElementById('selectedBlock').innerText = BLOCKS[blockType]?.name || blockType;
+            break;
+        }
+    }
+}
+
+// ==================== SAVE & EXPORT ====================
+function saveWorld() {
+    showToast('World saved!');
+    saveToHistory();
 }
 
 async function exportWorld() {
-    if (!currentWorldData) return;
-    
     showLoading(true);
-    
     try {
+        if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+        
         const zip = new JSZip();
+        const levelDat = JSON.stringify(worldData);
+        zip.file('level.dat', levelDat);
+        zip.file('levelname.txt', 'Edited World');
         
-        // Create modified level.dat
-        const levelDatBuffer = SimpleNBT.createLevelDat(currentWorldData);
-        zip.file('level.dat', levelDatBuffer);
-        
-        // Add levelname.txt
-        zip.file('levelname.txt', currentWorldData.levelName);
-        
-        // Add all other files
-        for (const [path, file] of Object.entries(currentWorldFiles)) {
-            if (path !== 'level.dat' && path !== 'levelname.txt' && file) {
-                const buffer = await file.arrayBuffer();
-                zip.file(path, buffer);
-            }
-        }
-        
-        // Generate and download
         const content = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(content);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${currentWorldData.levelName.replace(/[^a-z0-9]/gi, '_')}.mcworld`;
-        document.body.appendChild(a);
+        a.download = 'minecraft_world_edited.mcworld';
         a.click();
-        document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
         showToast('World exported successfully!');
-        
     } catch (error) {
         console.error('Export error:', error);
-        alert('Error exporting world: ' + error.message);
+        alert('Export error: ' + error.message);
     } finally {
         showLoading(false);
     }
 }
 
-function showEditorUI() {
-    document.getElementById('importSection').style.display = 'none';
-    document.getElementById('worldInfoSection').style.display = 'block';
-    document.getElementById('editorTabs').style.display = 'block';
-    document.getElementById('actionButtons').style.display = 'flex';
-}
-
-function resetToImport() {
-    document.getElementById('importSection').style.display = 'block';
-    document.getElementById('worldInfoSection').style.display = 'none';
-    document.getElementById('editorTabs').style.display = 'none';
-    document.getElementById('actionButtons').style.display = 'none';
-    
-    fileInput.value = '';
-    mcworldInput.value = '';
-    currentWorldData = null;
-    currentWorldFiles = {};
-}
-
+// ==================== UTILITIES ====================
 function showLoading(show) {
-    loadingOverlay.style.display = show ? 'flex' : 'none';
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = show ? 'flex' : 'none';
 }
 
 function showToast(message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
-    toast.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background: #66bb6a;
-        color: white;
-        padding: 12px 24px;
-        border-radius: 12px;
-        z-index: 1000;
-        animation: slideIn 0.3s ease;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    `;
-    
+    toast.innerHTML = `✓ ${message}`;
     document.body.appendChild(toast);
     setTimeout(() => {
         toast.style.animation = 'slideOut 0.3s ease';
@@ -412,21 +716,9 @@ function showToast(message) {
     }, 3000);
 }
 
-// Add CSS animations
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
-    }
-    @keyframes slideOut {
-        from { transform: translateX(0); opacity: 1; }
-        to { transform: translateX(100%); opacity: 0; }
-    }
-    .toast {
-        font-family: 'Inter', sans-serif;
-        font-size: 14px;
-        font-weight: 500;
-    }
-`;
-document.head.appendChild(style);
+function isHoveringBlock(block) {
+    const hoverX = parseInt(document.getElementById('hoverX')?.innerText || '-1');
+    const hoverY = parseInt(document.getElementById('hoverY')?.innerText || '-1');
+    const hoverZ = parseInt(document.getElementById('hoverZ')?.innerText || '-1');
+    return block.x === hoverX && block.y === hoverY && block.z === hoverZ;
+}
