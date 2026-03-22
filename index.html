@@ -2,35 +2,393 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minecraft World Editor</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Minecraft World Editor - Professional World Editing Tool</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#5c6bc0">
+    <meta name="description" content="Professional Minecraft world editor that runs in your browser. Edit worlds, game rules, player data, and more!">
 </head>
 <body>
-    <header>
-        <h1>Minecraft World Editor</h1>
-    </header>
-    <main>
-        <section id="editor">
-            <h2>Edit Your World</h2>
-            <input type="file" id="fileInput" />
-            <button id="loadBtn">Load World</button>
-            <button id="saveBtn">Save World</button>
-        </section>
-        <section id="tools">
-            <h2>Tools</h2>
-            <button id="brushTool">Brush Tool</button>
-            <button id="fillTool">Fill Tool</button>
-            <button id="eraseTool">Erase Tool</button>
-        </section>
-        <section id="output">
-            <h2>Output</h2>
-            <canvas id="worldCanvas"></canvas>
-        </section>
-    </main>
-    <footer>
-        <p>&copy; 2026 Minecraft World Editor</p>
-    </footer>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-cube"></i>
+                <h1>Minecraft World Editor</h1>
+            </div>
+            <div class="header-badges">
+                <span class="badge"><i class="fas fa-dice-d6"></i> Bedrock Edition</span>
+                <span class="badge"><i class="fas fa-mobile-alt"></i> Mobile Ready</span>
+                <span class="badge"><i class="fas fa-lock"></i> Local Only</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Import Section -->
+            <div class="import-section" id="importSection">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-file-import"></i>
+                        <h2>Import Minecraft World</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-area" id="uploadArea">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <p>Drag & drop your world folder or .mcworld file</p>
+                            <p class="small">Or click to browse</p>
+                            <input type="file" id="fileInput" webkitdirectory directory multiple style="display: none">
+                            <input type="file" id="mcworldInput" accept=".mcworld" style="display: none">
+                            <div class="button-group">
+                                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                    <i class="fas fa-folder-open"></i> Select World Folder
+                                </button>
+                                <button class="btn btn-secondary" onclick="document.getElementById('mcworldInput').click()">
+                                    <i class="fas fa-file-archive"></i> Import .mcworld
+                                </button>
+                            </div>
+                        </div>
+                        <div class="import-info">
+                            <i class="fas fa-info-circle"></i>
+                            <span>Your world is processed locally in your browser - nothing is uploaded to any server</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- World Info Section (Hidden until world loaded) -->
+            <div class="world-info-section" id="worldInfoSection" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-globe"></i>
+                        <h2>World Information</h2>
+                        <button class="btn-icon" id="closeWorldBtn">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="world-thumbnail" id="worldThumbnail" style="display: none;">
+                            <img id="thumbnailImg" src="" alt="World thumbnail">
+                        </div>
+                        <div class="world-details">
+                            <div class="detail-row">
+                                <label>World Name:</label>
+                                <input type="text" id="worldName" class="editable-input" placeholder="World name">
+                            </div>
+                            <div class="detail-row">
+                                <label>Seed:</label>
+                                <span id="worldSeed" class="value">-</span>
+                                <button class="btn-copy" onclick="copyToClipboard('worldSeed')">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                            <div class="detail-row">
+                                <label>Game Mode:</label>
+                                <select id="gameMode" class="editable-select">
+                                    <option value="0">Survival</option>
+                                    <option value="1">Creative</option>
+                                    <option value="2">Adventure</option>
+                                    <option value="3">Spectator</option>
+                                </select>
+                            </div>
+                            <div class="detail-row">
+                                <label>Difficulty:</label>
+                                <select id="difficulty" class="editable-select">
+                                    <option value="0">Peaceful</option>
+                                    <option value="1">Easy</option>
+                                    <option value="2">Normal</option>
+                                    <option value="3">Hard</option>
+                                </select>
+                            </div>
+                            <div class="detail-row">
+                                <label>World Size:</label>
+                                <span id="worldSize" class="value">-</span>
+                            </div>
+                            <div class="detail-row">
+                                <label>Last Played:</label>
+                                <span id="lastPlayed" class="value">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Editor Tabs -->
+            <div class="editor-tabs" id="editorTabs" style="display: none;">
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="game">
+                        <i class="fas fa-gamepad"></i> Game Settings
+                    </button>
+                    <button class="tab-btn" data-tab="time">
+                        <i class="fas fa-clock"></i> Time & Weather
+                    </button>
+                    <button class="tab-btn" data-tab="rules">
+                        <i class="fas fa-gavel"></i> Game Rules
+                    </button>
+                    <button class="tab-btn" data-tab="player">
+                        <i class="fas fa-user"></i> Player Data
+                    </button>
+                </div>
+
+                <!-- Game Settings Tab -->
+                <div class="tab-content active" id="gameTab">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="setting-group">
+                                <h3><i class="fas fa-trophy"></i> Game Mode Settings</h3>
+                                <div class="setting-row">
+                                    <label>Default Game Mode:</label>
+                                    <select id="defaultGameMode">
+                                        <option value="0">Survival</option>
+                                        <option value="1">Creative</option>
+                                        <option value="2">Adventure</option>
+                                    </select>
+                                </div>
+                                <div class="setting-row">
+                                    <label>Force Game Mode:</label>
+                                    <input type="checkbox" id="forceGameMode">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Has Been Loaded in Creative:</label>
+                                    <input type="checkbox" id="hasBeenCreative">
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <h3><i class="fas fa-dragon"></i> World Type</h3>
+                                <div class="setting-row">
+                                    <label>Is Hardcore:</label>
+                                    <input type="checkbox" id="hardcoreMode">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Commands Enabled:</label>
+                                    <input type="checkbox" id="commandsEnabled">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Time & Weather Tab -->
+                <div class="tab-content" id="timeTab">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="setting-group">
+                                <h3><i class="fas fa-sun"></i> Time Control</h3>
+                                <div class="setting-row">
+                                    <label>Current Time (ticks):</label>
+                                    <input type="number" id="worldTime" class="time-input">
+                                </div>
+                                <div class="time-presets">
+                                    <button class="preset-btn" onclick="window.setTime(0)">Sunrise (0)</button>
+                                    <button class="preset-btn" onclick="window.setTime(1000)">Morning (1000)</button>
+                                    <button class="preset-btn" onclick="window.setTime(6000)">Noon (6000)</button>
+                                    <button class="preset-btn" onclick="window.setTime(12000)">Sunset (12000)</button>
+                                    <button class="preset-btn" onclick="window.setTime(13000)">Night (13000)</button>
+                                    <button class="preset-btn" onclick="window.setTime(18000)">Midnight (18000)</button>
+                                </div>
+                                <div class="slider-container">
+                                    <input type="range" id="timeSlider" min="0" max="24000" step="100">
+                                    <div class="slider-labels">
+                                        <span>🌅</span>
+                                        <span>🌞</span>
+                                        <span>🌤️</span>
+                                        <span>🌙</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <h3><i class="fas fa-cloud-rain"></i> Weather Control</h3>
+                                <div class="weather-buttons">
+                                    <button class="weather-btn" onclick="window.setWeather('clear')">
+                                        <i class="fas fa-sun"></i> Clear
+                                    </button>
+                                    <button class="weather-btn" onclick="window.setWeather('rain')">
+                                        <i class="fas fa-cloud-rain"></i> Rain
+                                    </button>
+                                    <button class="weather-btn" onclick="window.setWeather('thunder')">
+                                        <i class="fas fa-bolt"></i> Thunderstorm
+                                    </button>
+                                </div>
+                                <div class="setting-row">
+                                    <label>Raining:</label>
+                                    <input type="checkbox" id="isRaining">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Thundering:</label>
+                                    <input type="checkbox" id="isThundering">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Rain Time (ticks):</label>
+                                    <input type="number" id="rainTime">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Clear Weather Time (ticks):</label>
+                                    <input type="number" id="clearWeatherTime">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Game Rules Tab -->
+                <div class="tab-content" id="rulesTab">
+                    <div class="card">
+                        <div class="card-body rules-grid">
+                            <div class="rule-item">
+                                <label>Allow Cheats:</label>
+                                <input type="checkbox" id="ruleAllowCheats">
+                            </div>
+                            <div class="rule-item">
+                                <label>Allow Flight:</label>
+                                <input type="checkbox" id="ruleAllowFlight">
+                            </div>
+                            <div class="rule-item">
+                                <label>Do Daylight Cycle:</label>
+                                <input type="checkbox" id="ruleDaylightCycle" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Do Weather Cycle:</label>
+                                <input type="checkbox" id="ruleWeatherCycle" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Do Mob Spawning:</label>
+                                <input type="checkbox" id="ruleMobSpawning" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Do Tile Drops:</label>
+                                <input type="checkbox" id="ruleTileDrops" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Do Entity Drops:</label>
+                                <input type="checkbox" id="ruleEntityDrops" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Keep Inventory:</label>
+                                <input type="checkbox" id="ruleKeepInventory">
+                            </div>
+                            <div class="rule-item">
+                                <label>Show Coordinates:</label>
+                                <input type="checkbox" id="ruleShowCoordinates">
+                            </div>
+                            <div class="rule-item">
+                                <label>Natural Regeneration:</label>
+                                <input type="checkbox" id="ruleNaturalRegen" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Fire Spread:</label>
+                                <input type="checkbox" id="ruleFireSpread" checked>
+                            </div>
+                            <div class="rule-item">
+                                <label>Insomnia (Phantoms):</label>
+                                <input type="checkbox" id="ruleInsomnia" checked>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Player Data Tab -->
+                <div class="tab-content" id="playerTab">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="setting-group">
+                                <h3><i class="fas fa-map-marker-alt"></i> Player Position</h3>
+                                <div class="coordinate-inputs">
+                                    <div class="coord-input">
+                                        <label>X:</label>
+                                        <input type="number" id="playerX" step="0.1">
+                                    </div>
+                                    <div class="coord-input">
+                                        <label>Y:</label>
+                                        <input type="number" id="playerY" step="0.1">
+                                    </div>
+                                    <div class="coord-input">
+                                        <label>Z:</label>
+                                        <input type="number" id="playerZ" step="0.1">
+                                    </div>
+                                </div>
+                                <button class="btn-small" onclick="window.resetToSpawn()">
+                                    <i class="fas fa-home"></i> Reset to Spawn
+                                </button>
+                            </div>
+
+                            <div class="setting-group">
+                                <h3><i class="fas fa-heartbeat"></i> Player Stats</h3>
+                                <div class="setting-row">
+                                    <label>Health:</label>
+                                    <input type="number" id="playerHealth" min="0" max="40">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Hunger:</label>
+                                    <input type="number" id="playerHunger" min="0" max="20">
+                                </div>
+                                <div class="setting-row">
+                                    <label>XP Level:</label>
+                                    <input type="number" id="playerXpLevel" min="0">
+                                </div>
+                                <div class="setting-row">
+                                    <label>XP Points:</label>
+                                    <input type="number" id="playerXpPoints" min="0">
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <h3><i class="fas fa-chess-queen"></i> Abilities</h3>
+                                <div class="setting-row">
+                                    <label>May Fly:</label>
+                                    <input type="checkbox" id="abilityMayFly">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Is Flying:</label>
+                                    <input type="checkbox" id="abilityFlying">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Invulnerable:</label>
+                                    <input type="checkbox" id="abilityInvulnerable">
+                                </div>
+                                <div class="setting-row">
+                                    <label>Instant Build:</label>
+                                    <input type="checkbox" id="abilityInstantBuild">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons" id="actionButtons" style="display: none;">
+                <button class="btn btn-success" id="applyChangesBtn">
+                    <i class="fas fa-check-circle"></i> Apply Changes
+                </button>
+                <button class="btn btn-warning" id="exportWorldBtn">
+                    <i class="fas fa-download"></i> Export as .mcworld
+                </button>
+                <button class="btn btn-danger" id="resetWorldBtn">
+                    <i class="fas fa-undo-alt"></i> Reset Changes
+                </button>
+            </div>
+
+            <!-- Loading Overlay -->
+            <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+                <div class="spinner"></div>
+                <p>Processing world data...</p>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p><i class="fas fa-lock"></i> All processing is done locally in your browser - your worlds never leave your device</p>
+            <p>© 2024 Minecraft World Editor | Made for Minecraft: Bedrock Edition</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismarine-nbt@2.4.0/browser.js"></script>
+    <script src="nbt.js"></script>
     <script src="script.js"></script>
 </body>
-</html>
+                                        </html>
