@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft World Editor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Minecraft World Editor</h1>
+    </header>
+    <main>
+        <section id="editor">
+            <h2>Edit Your World</h2>
+            <input type="file" id="fileInput" />
+            <button id="loadBtn">Load World</button>
+            <button id="saveBtn">Save World</button>
+        </section>
+        <section id="tools">
+            <h2>Tools</h2>
+            <button id="brushTool">Brush Tool</button>
+            <button id="fillTool">Fill Tool</button>
+            <button id="eraseTool">Erase Tool</button>
+        </section>
+        <section id="output">
+            <h2>Output</h2>
+            <canvas id="worldCanvas"></canvas>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2026 Minecraft World Editor</p>
+    </footer>
+    <script src="script.js"></script>
+</body>
+</html>
