@@ -1,0 +1,17 @@
+{
+  "name": "Minecraft World Editor",
+  "short_name": "MC World Editor",
+  "description": "Professional Minecraft world editor that runs in your browser",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#5c6bc0",
+  "icons": [
+    {
+      "src": "https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0/svgs/solid/cube.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
